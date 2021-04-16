@@ -10,7 +10,7 @@ model_params:
 
 exp_params:
   img_size: 64
-  data_dir: "./data"
+  data_dir: "./sample_data/scene-change-examples"
   model_save_dir: "./best_model"
   batch_size: 64 # Better to have a square number
   learning_rate: 0.0005
