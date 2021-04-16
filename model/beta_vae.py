@@ -19,6 +19,8 @@ class BetaVAE(nn.Module):
                  max_capacity: int = 25,
                  Capacity_max_iter: int = 1e5,
                  loss_type:str = 'B',
+                 image_height = 128,
+                 image_width = 128,
                  **kwargs) -> None:
         super(BetaVAE, self).__init__()
 
@@ -43,16 +45,20 @@ class BetaVAE(nn.Module):
                     nn.LeakyReLU())
             )
             in_channels = h_dim
+            image_height //= 2
+            image_width //= 2
 
         self.encoder = nn.Sequential(*modules)
-        self.fc_mu = nn.Linear(hidden_dims[-1]*4, latent_dim)
-        self.fc_var = nn.Linear(hidden_dims[-1]*4, latent_dim)
+        self.h = image_height
+        self.w = image_width
+        self.fc_mu = nn.Linear(hidden_dims[-1]* image_height * image_width, latent_dim)
+        self.fc_var = nn.Linear(hidden_dims[-1]* image_height * image_width, latent_dim)
 
 
         # Build Decoder
         modules = []
 
-        self.decoder_input = nn.Linear(latent_dim, hidden_dims[-1] * 4)
+        self.decoder_input = nn.Linear(latent_dim, hidden_dims[-1] * image_height * image_width)
 
         hidden_dims.reverse()
 
@@ -105,7 +111,7 @@ class BetaVAE(nn.Module):
 
     def decode(self, z: Tensor) -> Tensor:
         result = self.decoder_input(z)
-        result = result.view(-1, 512, 2, 2)
+        result = result.view(-1, 512, self.h, self.w)
         result = self.decoder(result)
         result = self.final_layer(result)
         return result
