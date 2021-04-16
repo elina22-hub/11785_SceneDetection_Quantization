@@ -35,15 +35,8 @@ class Scene_Detection():
                 os.makedirs(self.pic_save_dir)
     
     def data_transforms(self):
-        SetRange = transforms.Lambda(lambda X: 2 * X - 1.)
-        SetScale = transforms.Lambda(lambda X: X/X.sum(0).expand_as(X))
-
-        
-        transform = transforms.Compose([transforms.RandomHorizontalFlip(),
-                                        transforms.CenterCrop(148),
-                                        transforms.Resize(self.img_size),
-                                        transforms.ToTensor(),
-                                        SetRange])
+        transform = transforms.Compose([transforms.Resize((self.img_size, self.img_size)),
+                                        transforms.ToTensor()])
         return transform
 
     def load_data(self):
