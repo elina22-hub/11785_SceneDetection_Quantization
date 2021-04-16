@@ -10,7 +10,7 @@ model_params:
 
 exp_params:
   img_size: 64
-  data_dir: "./data_5000"
+  data_dir: "./data"
   model_save_dir: "./best_model"
   batch_size: 64 # Better to have a square number
   learning_rate: 0.0005
