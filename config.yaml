@@ -1,0 +1,24 @@
+model_params:
+  name: 'BetaVAE'
+  beta: 1
+  in_channels: 3
+  latent_dim: 128
+  loss_type: 'H'
+  gamma: 10.0
+  max_capacity: 25
+  Capacity_max_iter: 10000
+
+exp_params:
+  img_size: 64
+  data_dir: "./data_5000"
+  model_save_dir: "./best_model"
+  batch_size: 64 # Better to have a square number
+  learning_rate: 0.0005
+  weight_decay: 0.0
+  scheduler_gamma: 0.95
+  max_epochs: 10
+  manual_seed: 1265
+  log_save_dir: "./logs"
+  log_save_name: "BetaVAE"
+  pic_save_dir: "./scene_divergence_graph"
+
