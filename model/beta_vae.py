@@ -2,6 +2,9 @@ from typing import List, Callable, Union, Any, TypeVar, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.nn.init as init
+from torch.autograd import Variable
+
 
 Tensor = TypeVar('torch.tensor')
 
@@ -14,13 +17,13 @@ class BetaVAE(nn.Module):
                  in_channels: int,
                  latent_dim: int,
                  hidden_dims: List = None,
-                 beta: int = 4,
+                 beta: int = 2,
                  gamma:float = 1000.,
                  max_capacity: int = 25,
                  Capacity_max_iter: int = 1e5,
-                 loss_type:str = 'B',
-                 image_height = 128,
-                 image_width = 128,
+                 loss_type:str = 'H',
+                 image_height = 64,
+                 image_width = 64,
                  **kwargs) -> None:
         super(BetaVAE, self).__init__()
 
@@ -35,14 +38,15 @@ class BetaVAE(nn.Module):
         if hidden_dims is None:
             hidden_dims = [32, 64, 128, 256, 512]
 
+        self.hidden_dims = sorted(hidden_dims)
+
         # Build Encoder
         for h_dim in hidden_dims:
             modules.append(
                 nn.Sequential(
                     nn.Conv2d(in_channels, out_channels=h_dim,
                               kernel_size= 3, stride= 2, padding  = 1),
-                    nn.BatchNorm2d(h_dim),
-                    nn.LeakyReLU())
+                    nn.ReLU())
             )
             in_channels = h_dim
             image_height //= 2
@@ -71,8 +75,7 @@ class BetaVAE(nn.Module):
                                        stride=2,
                                        padding=1,
                                        output_padding=1),
-                    nn.BatchNorm2d(hidden_dims[i + 1]),
-                    nn.LeakyReLU())
+                    nn.ReLU())
             )
 
 
@@ -86,11 +89,12 @@ class BetaVAE(nn.Module):
                                                stride=2,
                                                padding=1,
                                                output_padding=1),
-                            nn.BatchNorm2d(hidden_dims[-1]),
-                            nn.LeakyReLU(),
+                            nn.ReLU(),
                             nn.Conv2d(hidden_dims[-1], out_channels= 3,
                                       kernel_size= 3, padding= 1),
-                            nn.Tanh())
+                            nn.Sigmoid())
+
+        self.weight_init()
 
     def encode(self, input: Tensor) -> List[Tensor]:
         """
@@ -111,45 +115,47 @@ class BetaVAE(nn.Module):
 
     def decode(self, z: Tensor) -> Tensor:
         result = self.decoder_input(z)
-        result = result.view(-1, 512, self.h, self.w)
+        result = result.view(-1, self.hidden_dims[-1], self.h, self.w)
         result = self.decoder(result)
         result = self.final_layer(result)
         return result
 
     def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
-        """
-        Will a single z be enough ti compute the expectation
-        for the loss??
-        :param mu: (Tensor) Mean of the latent Gaussian
-        :param logvar: (Tensor) Standard deviation of the latent Gaussian
-        :return:
-        """
+        
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return eps * std + mu
 
-    def forward(self, input: Tensor, **kwargs) -> Tensor:
-        mu, log_var = self.encode(input)
+    def weight_init(self):
+        
+        for block in self._modules:
+            if isinstance(self._modules[block], nn.Linear):
+                kaiming_init(self._modules[block])
+            else:
+                for m in self._modules[block]:
+                    kaiming_init(m)
+
+    def forward(self, x: Tensor, **kwargs) -> Tensor:
+        mu, log_var = self.encode(x)
         z = self.reparameterize(mu, log_var)
-        return [self.decode(z), input, mu, log_var]
+        return [self.decode(z), x, mu, log_var]
 
     def loss_function(self,
                       *args,
                       **kwargs) -> dict:
         self.num_iter += 1
         recons = args[0]
-        input = args[1]
+        x = args[1]
         mu = args[2]
         log_var = args[3]
-        #kld_weight = kwargs['M_N']  # Account for the minibatch samples from the dataset
-
-        recons_loss =F.mse_loss(recons, input)
-
+        batch_size = kwargs['batch_size']
+        
+        recons_loss = F.mse_loss(recons, x, size_average=False).div(batch_size)
         kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
 
         if self.loss_type == 'H': # https://openreview.net/forum?id=Sy2fzU9gl
             loss = recons_loss + self.beta * kld_loss
-            #loss = recons_loss + self.beta * kld_weight * kld_loss
+
         elif self.loss_type == 'B': # https://arxiv.org/pdf/1804.03599.pdf
             self.C_max = self.C_max.to(input.device)
             C = torch.clamp(self.C_max/self.C_stop_iter * self.num_iter, 0, self.C_max.data[0])
@@ -186,6 +192,16 @@ class BetaVAE(nn.Module):
 
         return self.forward(x)[0]
 
+
+def kaiming_init(m):
+    if isinstance(m, (nn.Linear, nn.Conv2d)):
+        init.kaiming_normal(m.weight)
+        if m.bias is not None:
+            m.bias.data.fill_(0)
+    elif isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d)):
+        m.weight.data.fill_(1)
+        if m.bias is not None:
+            m.bias.data.fill_(0)
 
 
 
