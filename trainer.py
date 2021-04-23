@@ -3,6 +3,7 @@ from typing import List, Callable, Union, Any, TypeVar, Tuple
 import torch
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
+from torchvision.utils import make_grid
 import torch.optim as optim
 Tensor = TypeVar('torch.tensor')
 from tqdm.notebook import tqdm
@@ -21,7 +22,8 @@ class Trainer():
 
         self.lr = params['learning_rate']
         self.batch_size = params['batch_size']
-        self.data_dir = params['data_dir']
+        self.train_data_dir = params['train_data_dir']
+        self.val_data_dir = params['val_data_dir']
         self.model_save_dir = params['model_save_dir']
         self.log_save_dir = params['log_save_dir']
         self.log_save_name = params['log_save_name']
@@ -37,7 +39,8 @@ class Trainer():
         self.train_data_loaded = False
         self.val_data_loaded = False
         self.optimizer = optim.Adam(self.model.parameters(),lr = self.lr,weight_decay = self.weight_decay)
-        self.scheduler = optim.lr_scheduler.ExponentialLR(self.optimizer,self.scheduler_gamma)
+        #self.scheduler = optim.lr_scheduler.ExponentialLR(self.optimizer,self.scheduler_gamma)
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode = 'min', factor = self.scheduler_gamma, patience = 3)
         self.best_val_total_loss = float('inf')
 
         self.logger = TestTubeLogger(save_dir=self.log_save_dir,
@@ -53,17 +56,30 @@ class Trainer():
         if not os.path.exists(self.log_save_dir):
                 os.makedirs(self.log_save_dir)
 
-    def data_transforms(self):
-        transform = transforms.Compose([transforms.Resize((self.img_size, self.img_size)),
-                                        transforms.ToTensor()])
+        self.tracking_image = None
+
+
+
+        
+    def data_transforms(self, phase):
+        if phase == 'train':
+            transform = transforms.Compose([transforms.Resize((self.img_size, self.img_size)),
+                                            transforms.RandomHorizontalFlip(p=0.5),
+                                            transforms.ColorJitter(brightness=0.8, contrast=0.8, saturation=0.8),
+                                            transforms.ToTensor()])
+        else:
+            transform = transforms.Compose([transforms.Resize((self.img_size, self.img_size)),
+                                            transforms.ToTensor()])
         return transform
 
+
     def load_data(self, phase):
-        transform_list = self.data_transforms()
-        dataset = datasets.ImageFolder(self.data_dir, transform=transform_list)
+        transform_list = self.data_transforms(phase)
         if phase == 'train':
-            data_loader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=True, drop_last=False, num_workers=4)
+            dataset = datasets.ImageFolder(self.train_data_dir, transform=transform_list)
+            data_loader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=True, drop_last=True, num_workers=4)
         else:
+            dataset = datasets.ImageFolder(self.val_data_dir, transform=transform_list)            
             data_loader = torch.utils.data.DataLoader(dataset, batch_size=self.batch_size, shuffle=False, drop_last=False, num_workers=4)
         return data_loader  
     
@@ -78,12 +94,13 @@ class Trainer():
     def train_model(self):
         self.model.train()
         train_loss = {'train_total_loss':0.0, 'train_recon_loss':0.0,'train_kld':0.0}
+        
         len_data_loader = len(self.train_dataloader) 
         for _, (x, y) in tqdm(enumerate(self.train_dataloader),total=len_data_loader,leave = False):
             self.optimizer.zero_grad()     
             x= x.to(self.device)
-            results = self.model.forward(x, labels=y)
-            loss = self.model.loss_function(*results)
+            results = self.model.forward(x)
+            loss = self.model.loss_function(*results, M_N = 1.0/float(len_data_loader), batch_size = self.batch_size)
 
             loss['total_loss'].backward()
             self.optimizer.step()
@@ -106,7 +123,7 @@ class Trainer():
             for _, (x, y) in tqdm(enumerate(self.val_dataloader),total=len_data_loader, leave = False):
                 x = x.to(self.device)
                 results = self.model.forward(x)
-                loss = self.model.loss_function(*results)
+                loss = self.model.loss_function(*results,M_N = 1.0/float(len_data_loader), batch_size = self.batch_size)
 
                 val_loss['val_total_loss'] += loss['total_loss'].cpu().detach().numpy()
                 val_loss['val_recon_loss'] += loss['recon_loss'].cpu().detach().numpy()
@@ -118,10 +135,12 @@ class Trainer():
 
         return val_loss
     
-    def init_train_config(self):
+    def init_train_data(self):
         if not self.train_data_loaded:
             self.train_dataloader = self.load_data('train')
             self.train_data_loaded = True
+
+    def init_val_data(self):
         if not self.val_data_loaded:
             self.val_dataloader = self.load_data('val')
             self.train_data_loaded = True
@@ -151,24 +170,75 @@ class Trainer():
 
     
     def fit(self):
-        self.init_train_config()
+        self.init_train_data()
+        self.init_val_data()
         while True:
             self.global_epochs += 1
             train_loss = self.train_model()
             val_loss = self.val_model()
 
             print('------Epoch {}------'.format(self.global_epochs))
+            #print(train_loss)
+            
             print('Train: total_loss:{:6f}, recon_loss:{:6f}, kld:{:6f}'.format(train_loss['train_total_loss'],train_loss['train_recon_loss'],train_loss['train_kld']))
             print('Val  : total_loss:{:6f}, recon_loss:{:6f}, kld:{:6f}'.format(val_loss['val_total_loss'],val_loss['val_recon_loss'],val_loss['val_kld']))
             if (val_loss['val_total_loss'] < self.best_val_total_loss):
                 self.best_val_total_loss = val_loss['val_total_loss']
                 self.save_checkpoint()
+            
+            if self.global_epochs % 5 == 0:
+                self.track_img()
             if self.global_epochs >= self.max_epochs:
                 break
             
             train_loss.update(val_loss)
             self.logger.log_metrics(train_loss)
             self.logger.save()
-                
-            self.scheduler.step()
+            self.scheduler.step(self.best_val_total_loss)   
+            #self.scheduler.step()
+
+
+    def track_img(self):
+        if self.tracking_image is None:
+            images,_ = next(iter(self.val_dataloader)) # first batch
+            idx = np.arange(len(images))
+            rand_idx = np.random.choice(idx, size = 16, replace = False)
+            self.tracking_image = images[rand_idx]
+        images = self.tracking_image.to(self.device)
+        recon_images = self.model.generate(images)
+
+        plt.figure(figsize=(8,8))
+        plt.axis("off")
+        plt.imshow(np.transpose(make_grid(images, padding=2, normalize=True).cpu(),(1,2,0)))
+        plt.show()
+
+        plt.figure(figsize=(8,8))
+        plt.axis("off")
+        plt.imshow(np.transpose(make_grid(recon_images, padding=2, normalize=True).cpu(),(1,2,0)))
+        plt.show()
+
+
+
+
+       
+
+
+    def display_img(self, images = None, figsize = (10,10), nrow = 8, ncol = 8, display_org = False):
+        if images is None:
+            self.init_val_data()
+            images,_ = next(iter(self.val_dataloader)) # first batch
+        images = images[:64]
+        images = images.to(self.device)
+        recon_images = self.model.generate(images)
+        print('Original Images:')
+        plt.figure(figsize=(8,8))
+        plt.axis("off")
+        plt.imshow(np.transpose(make_grid(images, padding=2, normalize=True).cpu(),(1,2,0)))
+        plt.show()
+        print('\n\nReconstruction Images:')
+        plt.figure(figsize=(8,8))
+        plt.axis("off")
+        plt.imshow(np.transpose(make_grid(recon_images, padding=2, normalize=True).cpu(),(1,2,0)))
+        plt.show()
+
     
