@@ -1,7 +1,7 @@
 # Scene Change Detection and Quantization
 Pytorch implementation of beta-VAE model on scene-change detection explore quantization methods to reduce memory-bandwith and improve inference latency.
 
-Folder Structure is as follows.
+Folder structure is as follows.
 
 ```bash
 ├── README.md 
