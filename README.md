@@ -23,7 +23,7 @@ Folder structure is as follows.
 ├── sample_data                                                 # sample data of 5 scenes
 │   └── ...
 └── training                                                    # model training code
-    ├── best_model                                              # trained model of different hyper-paramters
+    ├── best_model                                              # trained models of different hyper-paramters
     │   └── ...
     ├── config.yaml                                             # model and experiment configuration 
     ├── model                                                   # beta vae model
