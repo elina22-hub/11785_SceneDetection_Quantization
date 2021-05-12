@@ -19,6 +19,8 @@ Folder structure is as follows.
 │       └── ...
 ├── quantization                                                # quantization code
 │   ├── BetaVAE_Quantization.ipynb
+│   ├── BetaVAE_Quantization_2-AMD.ipynb
+│   ├── BetaVAE_Quantization_2-Cascade.ipynb
 │   └── BetaVAE_Quantization_batchsize=1.ipynb
 ├── sample_data                                                 # sample data of 5 scenes
 │   └── ...
